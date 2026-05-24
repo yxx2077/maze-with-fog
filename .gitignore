@@ -1,7 +1,5 @@
 .vs/
-x64/
-Debug/
-*.exe
-*.pdb
-*.ilk
-*.db
+.x64/
+.迷宫（核心部分）/
+
+*.vcxproj.user
