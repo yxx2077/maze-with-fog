@@ -180,10 +180,11 @@ struct GameImages
 
 struct GameSounds
 {
-    LPCWSTR collectSound;
-    LPCWSTR hurtSound;
-    LPCWSTR winSound;
-    LPCWSTR loseSound;
+    LPCWSTR collectKeySound;   // 收集钥匙音效
+    LPCWSTR hurtSound;  // 受到攻击音效
+    LPCWSTR bkSound;    // 新增背景音效
+    LPCWSTR healSound;  // 新增治疗音效
+    LPCWSTR wallSound;  // 新增撞墙音效
 };
 
 // 游戏主数据结构
@@ -690,6 +691,7 @@ void renderUI(const Player& player,
  */
 int loadGameResources(GameImages& img, GameSounds& sound);
 
+
 /*
  * 功能: 释放所有游戏资源
  * 负责人: chen
@@ -910,6 +912,8 @@ void initLevel(int level)
 }
 
 // ========== 游戏逻辑函数实现 ==========
+ULONGLONG g_lastHurtTime = 0;
+const ULONGLONG INVINCIBLE_TIME = 500; // 500毫秒无敌时间
 
 void playerMove(Direction dir)
 {
@@ -937,8 +941,8 @@ void playerMove(Direction dir)
     switch (targetCell) {
     case WALL:
         // 墙壁，阻止移动
-        // 播放碰撞音效
-        PlaySound(game.gameSounds.hurtSound, NULL, SND_FILENAME | SND_ASYNC);
+        // 播放撞墙音效
+        PlaySound(game.gameSounds.wallSound, NULL, SND_FILENAME | SND_ASYNC);
         return;
 
     case PATH:
@@ -955,7 +959,9 @@ void playerMove(Direction dir)
         game.player.keys += 1;
         game.player.score += 50; // 收集钥匙加分
         game.maze[targetY][targetX].type = PATH; // 移除钥匙
-        PlaySound(game.gameSounds.collectSound, NULL, SND_FILENAME | SND_ASYNC);
+
+        //播放收集钥匙音效
+        PlaySound(game.gameSounds.collectKeySound, NULL, SND_FILENAME | SND_ASYNC);
         game.player.steps += 1;
         break;
 
@@ -967,7 +973,10 @@ void playerMove(Direction dir)
         if (game.player.health > MAX_HEALTH) game.player.health = MAX_HEALTH;
         game.player.score += 20; // 收集血包加分
         game.maze[targetY][targetX].type = PATH; // 移除血包
-        PlaySound(game.gameSounds.collectSound, NULL, SND_FILENAME | SND_ASYNC);
+
+        //播放恢复音效
+        PlaySound(game.gameSounds.healSound, NULL, SND_FILENAME | SND_ASYNC);
+
         game.player.steps += 1;
         break;
 
@@ -982,11 +991,9 @@ void playerMove(Direction dir)
             if (game.player.keys >= currentLevel.keyCount) {
                 // 通关成功
                 game.gameState = LEVEL_COMPLETE;
-                PlaySound(game.gameSounds.winSound, NULL, SND_FILENAME | SND_ASYNC);
             }
             else {
                 // 钥匙不足，阻止通关
-                PlaySound(game.gameSounds.hurtSound, NULL, SND_FILENAME | SND_ASYNC);
                 return;
             }
         }
@@ -996,17 +1003,34 @@ void playerMove(Direction dir)
         return; // 未知类型，阻止移动
     }
 
-    // 检查是否与敌人碰撞
+    // ========== 敌人碰撞检测（带无敌帧） ==========
+    ULONGLONG currentTime = GetTickCount64();
+    bool isInvincible = (currentTime - g_lastHurtTime < INVINCIBLE_TIME);
+
     for (int i = 0; i < game.enemyCount; i++) {
         if (game.player.pos.x == game.enemies[i].pos.x &&
             game.player.pos.y == game.enemies[i].pos.y) {
-            // 与敌人碰撞，受伤
-            game.player.health -= 20;
-            PlaySound(game.gameSounds.hurtSound, NULL, SND_FILENAME | SND_ASYNC);
 
-            if (game.player.health <= 0) {
-                game.player.health = 0;
-                game.gameState = GAME_OVER;
+            if (!isInvincible) {
+                // 可以受伤
+                Sleep(10);
+                game.player.health -= 20;
+                
+                g_lastHurtTime = currentTime; // 记录受伤时间
+                
+                PlaySound(game.gameSounds.hurtSound, NULL, SND_FILENAME | SND_ASYNC | SND_NOSTOP);
+
+                cout << "玩家受伤！生命值: " << game.player.health
+                    << ", 进入无敌状态" << endl;
+
+                if (game.player.health <= 0) {
+                    game.player.health = 0;
+                    game.gameState = GAME_OVER;
+                }
+            }
+            else {
+                // 无敌状态中，不受伤
+                cout << "无敌状态中，免疫伤害" << endl;
             }
             break;
         }
@@ -1119,12 +1143,20 @@ void updateEnemies()
         // 碰撞检测
         if (enemy.pos.x == game.player.pos.x && enemy.pos.y == game.player.pos.y)
         {
-            game.player.health -= 20;
-            PlaySound(game.gameSounds.hurtSound, NULL, SND_FILENAME | SND_ASYNC);
+            ULONGLONG currentTime = GetTickCount64();
+            bool isInvincible = (currentTime - g_lastHurtTime < INVINCIBLE_TIME);
 
-            if (game.player.health <= 0) {
-                game.player.health = 0;
-                game.gameState = GAME_OVER;
+            if (!isInvincible)
+            {
+                game.player.health -= 20;
+                g_lastHurtTime = currentTime; // 记录受伤时间
+                PlaySound(game.gameSounds.hurtSound, NULL, SND_FILENAME | SND_ASYNC);
+
+                if (game.player.health <= 0)
+                {
+                    game.player.health = 0;
+                    game.gameState = GAME_OVER;
+                }
             }
         }
     }
@@ -1691,7 +1723,7 @@ void showMenu()
         solidrectangle(highlight_x, highlight_y, highlight_x + 150, highlight_y + 39);
         outtextxy(113, 310, _T("开始游戏"));
         outtextxy(129, 389, _T("关卡选择"));
-        outtextxy(145, 468, fogModeText);  // 使用动态文本
+        outtextxy(145, 468, fogModeText); ;  // 使用动态文本
         outtextxy(161, 547, _T("退出游戏"));
         EndBatchDraw();
         msg.message = 0;
@@ -1844,10 +1876,11 @@ void showGame()
     static bool isPaused = false;
     bool escPressed = false;      // 记录ESC键状态
 
+    playbackgroundmusic(game.gameSounds.bkSound, true);
     // 帧率控制
     ULONGLONG lastTime = GetTickCount64();
-    const int TARGET_FPS = 60;
-    const int FRAME_TIME = 1000 / TARGET_FPS;
+    const ULONGLONG TARGET_FPS = 60;
+    const ULONGLONG FRAME_TIME = 1000 / TARGET_FPS;
 
     BeginBatchDraw();
     while (game.gameState == PLAYING)
@@ -1925,6 +1958,7 @@ void showGame()
         currentState = checkGameState();
         if (currentState != PLAYING) {
             game.gameState = currentState;
+            closebackgroundmusic();
             break;
         }
 
@@ -2072,13 +2106,14 @@ bool w_inarea(const ExMessage& ref2, int x, int y, int width, int height)
         return true;
     }
     return false;
+    
 }
 
 bool w_button(const wchar_t* text, int x, int y, const ExMessage& ref)
 {
     int text_width = textwidth(text);
     int text_height = textheight(text);
-    if (w_inarea(ref, x, y, text_width, text_height))
+    if (w_inarea(ref, x, y, text_width + 40, text_height + 40))
     {
         setfillcolor(RGB(255, 253, 85));
         if (ref.message == WM_LBUTTONDOWN)
@@ -2212,7 +2247,7 @@ void showLevelComplete()
             }
         }
         EndBatchDraw();
-        Sleep(10);
+        Sleep(5);
     }
 }
 
@@ -2540,10 +2575,11 @@ int loadGameResources(GameImages& img, GameSounds& sound)   //此处应当传入
     }
 
     //  加载音频资源（只记录路径，播放时用 mciSendString）
-    sound.collectSound = L".wav";
-    sound.hurtSound = L".wav";
-    sound.winSound = L".wav";
-    sound.loseSound = L".wav";
+    sound.collectKeySound = L"assets/collectKeySound.wav";
+    sound.hurtSound = L"assets/hurtSound1.wav";
+    sound.bkSound = L"assets/bkSound.mp3";
+    sound.healSound = L"assets/healSound.wav";
+    sound.wallSound = L"assets/wallSound.wav";
 
     // 4 输出加载结果
     if (success) {
